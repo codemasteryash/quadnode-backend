@@ -6,7 +6,8 @@ import hashlib
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
@@ -24,6 +25,14 @@ logging.basicConfig(
 )
 
 app = FastAPI(title="QuadNode Apex Edge Intelligence")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 1. Initialize Neural Models
 print("Booting QuadNode Apex Architecture...")
@@ -93,6 +102,32 @@ def system_status():
         "local_only_secured": local_only,
         "cache_size": len(SEMANTIC_CACHE)
     }
+
+@app.get("/memories")
+def list_memories(limit: int = Query(default=100, le=500)):
+    """Lists local edge memories for the React Memory page / sync queue."""
+    points, _ = edge_db.scroll(
+        collection_name=COLLECTION_NAME,
+        limit=limit,
+        with_payload=True,
+        with_vectors=False,
+    )
+    items = []
+    for p in points:
+        payload = p.payload or {}
+        items.append({
+            "id": str(p.id),
+            "text": payload.get("text", ""),
+            "source": payload.get("source", "manual_entry"),
+            "sync_status": payload.get("sync_status", "UNKNOWN"),
+            "timestamp": payload.get("timestamp", 0),
+        })
+    # Newest first when timestamp present
+    try:
+        items.sort(key=lambda m: m["timestamp"] or 0, reverse=True)
+    except Exception:
+        pass
+    return items
 
 @app.post("/ingest")
 def ingest_memory(req: IngestRequest):
